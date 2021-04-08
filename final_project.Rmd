@@ -1,0 +1,548 @@
+---
+title: "R Notebook"
+output:
+  html_document:
+    df_print: paged
+editor_options:
+  chunk_output_type: console
+---
+
+
+
+
+```{r warning=FALSE, echo=FALSE}
+
+###################################################################
+# Load Libraries 
+###################################################################
+library(tidyverse)
+
+###################################################################
+# Load Tables that are stored as CSVs on Github
+###################################################################
+
+# ICD-9 Diagnostic codes
+nineDX11 <- read_csv("https://raw.githubusercontent.com/PositiveSumData/HMP_553/main/9DX11.csv")
+
+# ICD-9-CM Operative Codes
+nine0P11 <- read_csv("https://raw.githubusercontent.com/PositiveSumData/HMP_553/main/9OP11.csv?token=AOUMBHAGKGSZG2TSGOG2CP3AM2FTQ")
+
+# Patient ICU stays
+CRIT_2000 <- read_csv("https://raw.githubusercontent.com/PositiveSumData/HMP_553/main/CRIT_2000.csv?token=AOUMBHADQBHKXUUKB7V3Q4TAM2GDY") %>%
+  select(-PAT_NO_TAG)
+
+# Disposition codes
+DISPOSTN <- read_csv("https://raw.githubusercontent.com/PositiveSumData/HMP_553/main/DISPOSTN.csv?token=AOUMBHE4FATYKQPJTDSMMF3AM2GE4")
+
+# DRGs
+DRG <- read_csv("https://raw.githubusercontent.com/PositiveSumData/HMP_553/main/DRG.csv?token=AOUMBHFBTBYE3Q4TL4KTRRDAM2GF4")
+
+# Inpatient encounters
+OMEGA_2000 <- read_csv("https://raw.githubusercontent.com/PositiveSumData/HMP_553/main/OMEGA_2000.csv?token=AOUMBHA2FQ7AWMLVZE5FCQ3AM2GHG")
+
+# Patient diagnostic data
+OME_DX_2000 <- read_csv("https://raw.githubusercontent.com/PositiveSumData/HMP_553/main/OME_DX_2000.csv?token=AOUMBHFOYLTZQZQBGMTEAILAM2GIU")
+
+# Patient operative data
+OME_PX_2000 <- read_csv("https://raw.githubusercontent.com/PositiveSumData/HMP_553/main/OME_PX_2000.csv?token=AOUMBHA66FZEP7AHOSTBOKDAM2GKY")
+
+# Organ donations
+ORGAN <- read_csv("https://raw.githubusercontent.com/PositiveSumData/HMP_553/main/ORGAN.csv?token=AOUMBHFMVUHRBMG6KI3IDRDAM2GMC")
+
+# ???????? This table is provided in the database but is not described in the codebook
+PAYEX <- read_csv("https://raw.githubusercontent.com/PositiveSumData/HMP_553/main/PAYEX.csv?token=AOUMBHDRDOXPNZORSPDOJSLAM2GNC")
+
+# Services codes
+SERVICE <- read_csv("https://raw.githubusercontent.com/PositiveSumData/HMP_553/main/SERVICE.csv?token=AOUMBHBANABWFQP7P3GVNALAM2GOC")
+
+# Admission Source
+SOURCE <- read_csv("https://raw.githubusercontent.com/PositiveSumData/HMP_553/main/SOURCE.csv?token=AOUMBHHIEF5IJH3KPSV45STAM2GPQ")
+
+# Tissues
+TISSUE <- read_csv("https://raw.githubusercontent.com/PositiveSumData/HMP_553/main/TISSUE.csv?token=AOUMBHFMOZUROW2XOBCCVQTAM2GQM")
+
+# Yes/No designation
+YES_NO <- read_csv("https://raw.githubusercontent.com/PositiveSumData/HMP_553/main/YES_NO.csv?token=AOUMBHA2GSK3P6IFX4HAYJDAM2GTC")
+
+```
+
+# Examining Referential Integrity
+
+## CRIT_2000 | Patient data table regarding ICU stays
+
+No primary key. Is PAT_NO-ADM_DATE the composite key?
+```{r}
+CRIT_2000 %>%
+  count(PAT_NO, ADM_DATE) %>%
+  arrange(desc(n)) %>%
+  slice(1)
+```
+Nope, a single PAT_NO-ADM_DATE combo appears six times.
+
+Let's try adding in ICU.
+```{r}
+CRIT_2000 %>% count(PAT_NO, ADM_DATE, ICU) %>%
+  arrange(desc(n))
+```
+Nope, didn't work either. Let's try PAT_NO-ADM_DATE-OCCURRENCE
+
+```{r}
+CRIT_2000 %>% count(PAT_NO, ADM_DATE, OCCURRENCE) %>%
+  arrange(desc(n)) %>%
+  slice(1)
+```
+That worked. Our **composite key is PAT_NO-ADM_DATE-OCCURRENCE**.
+
+Each row is a unique combination of patient id, date of admission, and occurrence. The definition of occurrence in the codebook is confusing: "Ordering of CCU Stays." What is a Critical Care Unit, and how is it difference from the ICU? And how does it work out that someone ivsits the CCU multiple separate times over their admission?
+
+
+And what's the difference between all the ICU categories?
+```{r}
+CRIT_2000 %>% count(ICU)
+```
+Google says MICU is "medical intensive care unit". SICU is "surgical intensive care unit". I can't seem to figure out what CCU and SPEC_NSRY stand for.
+
+
+What's the difference between ICU_LOS and TOT_CCUS? Is "critical care" different from "intensive care"? Both lengths of stay added together are usually far less than the total stay (discharge - admitted). 
+
+
+## DRG
+
+What's the primary key in the DRG table?
+```{r}
+DRG %>% count(DRG) %>%
+  arrange(desc(n)) %>%
+  slice(1)
+```
+It looks like **DRG is the DRG Primary key**.
+
+What is the WEIGHT and ARITH_LOS and MEAN_LOW and CUTOFF and how is reimbursement calculated? Are we supposed to use these in calculating reimbursement by DRG?. 
+
+
+## nineDX11
+
+What is the primary key in nineDX11?
+```{r}
+nineDX11 %>% count(DIAG) %>%
+  arrange(desc(n)) %>%
+  slice(1)
+```
+It appears there can be up to two rows for each DIAG in the table. Why?
+```{r}
+nineDX11 %>%
+  group_by(DIAG) %>%
+  mutate(totes_diags = n()) %>%
+  ungroup() %>%
+  filter(totes_diags > 1) %>%
+  arrange(DIAG)
+```
+It seems the rows are complete duplicates, but let's check that's true if we do a group_by for all columns. 
+
+```{r}
+nineDX11 %>%
+  group_by(DIAG) %>%
+  mutate(totes_diags = n()) %>%
+  ungroup() %>%
+  filter(totes_diags > 1) %>%
+  group_by(DIAG, DIAG_DESC, DIAG_C, DIAG_5) %>%
+  count() %>%
+  arrange()
+```
+It seems indeed these rows are completely duplicated, because none of them had differences across any of the variables. 
+
+Safe to filter out the duplicate values I think?
+
+```{r}
+nineDX11 <- nineDX11 %>%
+  distinct()
+```
+**DIAG is the primary key.**
+
+## nineOP11 | Descriptor Table for ICD-9-CM Operative Codes 
+
+What's the primary key for nineOP11?
+
+```{r}
+nine0P11 %>%
+  count(OP) %>%
+  arrange(desc(n)) %>%
+  slice(1)
+```
+Seems like **OP is the primary key for nineOP11**. All fine here. Could probably use OP_C as well.
+
+
+## DISPOSTN
+
+Is DISPOSTN the primary key of DISPOSTN?
+```{r}
+DISPOSTN %>% count(DISPOSTN) %>%
+  arrange(desc(n)) %>%
+  slice(1)
+```
+Yep, all fine here. 
+
+
+## PAYEX
+
+There's no table description for PAYEX in the documentation. Does that mean it's safe to assume we don't need to use it?
+
+It's a small table. Don't need to check counts. 
+
+
+## ORGAN
+
+Small table, looks fine. **ORGAN_DON** is the primary key.
+
+
+## SERVICE
+
+Small table, looks fine. **SERVICE** is the primary key.
+
+## SOURCE 
+
+Small table, looks fine. **ADM_SOURCE** is the primary key.
+
+
+## TISSUE
+
+Small table, looks fine. **TISSUE** is the primary key.
+
+
+## YES_NO
+
+Small table, looks fine. **YES_NO** is the primary key. But where does this link to other tables?
+
+
+## OMEGA_2000 | Data for each inpatient encounter during 2000
+
+What's the primary key in the OMEGA_2000 table?
+
+Start with PAT_NO & ADM_DATE & ADM_HR
+```{r}
+OMEGA_2000 %>% count(PAT_NO, ADM_DATE, ADM_HR) %>%
+  arrange(desc(n)) %>% 
+  slice(1) 
+```
+Nope, we have duplicates of that pairing.
+
+Are there genuinely duplicated rows in the table?
+
+```{r}
+OMEGA_2000 %>%
+  summarize(n())
+OMEGA_2000 %>%
+  distinct() %>%
+  summarize(n())
+```
+
+Yes, it seems there are. Let's remove duplicates.
+```{r}
+OMEGA_2000 <- OMEGA_2000 %>%
+  distinct()
+```
+
+Let's check if PAT_NO-ADM_DATE-ADM_HR is now a primary key now that overall duplicates removed 
+
+```{r}
+OMEGA_2000 %>% count(PAT_NO, ADM_DATE, ADM_HR) %>%
+  arrange(desc(n)) %>%
+  slice(1)
+
+```
+Yep, no duplicates anymore. **PAT_NO-ADM_DATE-ADM_HR** is the composite key.
+
+
+It appears since we don't have a patient demographics table that we're supposed to get all our data from here. Which variables are these and are they consistent across the table?
+```{r}
+OMEGA_2000 %>%
+  select(PAT_NO,
+         AGE, 
+         AGE_DAYS, 
+         BIRTH_WGHT, # note this variable listed as BIRTH_WEIGHT in the code book
+         RACE,
+         SEX,
+         RELIGION,
+         DISTANCE,
+         ZIP) %>%
+  group_by(PAT_NO,
+           AGE, 
+           AGE_DAYS, 
+           BIRTH_WGHT, 
+           RACE,
+           SEX,
+           RELIGION,
+           DISTANCE,
+           ZIP) %>%
+  mutate(totes_count = n()) %>%
+  filter(totes_count > 1) %>%
+  arrange(PAT_NO)
+```
+We have duplicates across all these variables. Let's just remove all duplicates and save in a new dataset for demographic characteristics
+```{r}
+OMEGA_2000_demo <- OMEGA_2000 %>%
+  select(PAT_NO,
+         AGE, 
+         AGE_DAYS, 
+         BIRTH_WGHT, # note this variable listed as BIRTH_WEIGHT in the code book
+         RACE,
+         SEX,
+         RELIGION,
+         DISTANCE,
+         ZIP) %>%
+  unique() 
+```
+
+
+## OME_PX_2000 | Table of all patient operative data
+
+IS PAT_NO-ADM_DATE-OCCURRENCE the primary key?
+```{r}
+OME_PX_2000 %>%
+  count(PAT_NO, ADM_DATE, OCCURRENCE) %>%
+  arrange(desc(n)) %>%
+  slice(1)
+```
+We have duplicates. Let's examine what's going on within the duplicates.
+
+```{r}
+OME_PX_2000_test_1 <- OME_PX_2000 %>%
+  group_by(PAT_NO, ADM_DATE, OCCURRENCE) %>%
+  mutate(totes = n()) %>%
+  ungroup() %>%
+  filter(totes > 1) %>%
+  arrange(PAT_NO)
+```
+
+Maybe we need to add the procedure code.
+
+```{r}
+OME_PX_2000 %>%
+  group_by(PAT_NO, ADM_DATE, OCCURRENCE, OP_PROC_9) %>%
+  count() %>%
+  filter(n > 1) %>%
+  arrange(desc(n))
+```
+Still duplicates. Are these genuinely duplicated rows?
+
+```{r}
+OME_PX_2000 %>%
+  summarize(n())
+
+OME_PX_2000 %>%
+  distinct() %>%
+  summarize(n())
+```
+
+Ah, there genuinely are duplicates across all rows. Let's remove them.
+
+```{r}
+OME_PX_2000 <- OME_PX_2000 %>%
+  distinct()
+```
+
+Re-check for primary key from PAT_NO-ADM_DATE_OCCURENCE
+```{r}
+OME_PX_2000 %>%
+  group_by(PAT_NO, ADM_DATE, OCCURRENCE) %>%
+  count() %>%
+  arrange(desc(n))
+```
+Ok, we have our primary key: **PAT_NO-ADM_DATE-OCCURRENCE**
+
+An occurrence is a time during the entire admission that services were provided.
+
+The TOT_NO_OPS column isn't really necessary. It's the max # of occurrences per PAT_NO-ADM_DATE
+
+
+## OME_DX_00 | Table of all patient diagnostic data
+
+What's the primary key?
+```{r}
+OME_DX_2000 %>%
+  count(PAT_NO, ADM_DATE, OCCURRENCE) %>%
+  arrange(desc(n)) %>%
+  slice(1)
+```
+We have duplicates across PAT_NO-ADM_DATE-OCCURRENCE. Let's check for genuine row duplication like before.
+
+```{r}
+OME_DX_2000 %>%
+  summarize(n())
+
+OME_DX_2000 %>%
+  distinct() %>%
+  summarize(n())
+```
+
+Yep, lots of duplicates. Let's remove and re-check the primary key.
+
+```{r}
+OME_DX_2000 <- OME_DX_2000 %>% distinct()
+```
+
+```{r}
+OME_DX_2000 %>%
+  count(PAT_NO, ADM_DATE, OCCURRENCE) %>%
+  arrange(desc(n))%>%
+  slice(1)
+```
+
+Still duplicates! What else is causing it?
+
+```{r}
+OME_DX_2000_test_1 <- OME_DX_2000 %>%
+  group_by(PAT_NO, ADM_DATE, OCCURRENCE) %>%
+  mutate(totes_count = n()) %>%
+  ungroup() %>%
+  group_by(PAT_NO, ADM_DATE) %>%
+  mutate(any_dupes = max(totes_count)) %>%
+  ungroup() %>%
+  filter(any_dupes > 1) %>%
+  arrange(PAT_NO, ADM_DATE, OCCURRENCE)
+```
+It looks like there can be multiple diagnoses per occurrence.
+
+Let's check counts for a combined key of PAT_NO-ADM_DATE-OCCURRENCE-DIAGNOSIS
+```{r}
+OME_DX_2000 %>%
+  count(PAT_NO, ADM_DATE, OCCURRENCE, DIAGNOSIS) %>%
+  arrange(desc(n))%>%
+  slice(1)
+```
+Still duplicates!! What's going on?
+
+Let's see which cases are throwing a problem
+```{r}
+OME_DX_2000 %>%
+  group_by(PAT_NO, ADM_DATE, OCCURRENCE, DIAGNOSIS) %>%
+  mutate(totes = n()) %>%
+  ungroup() %>%
+  filter(totes > 1) %>%
+  arrange(PAT_NO, ADM_DATE, OCCURRENCE, DIAGNOSIS)
+```
+
+Patient # 28940773 has two rows where everything else is the same except for discharge date. I have no idea what's going on.
+Question for DAVID.
+
+
+# Referential Integrity
+
+```{r}
+OMEGA_2000_pat_count <- OMEGA_2000 %>% distinct(PAT_NO) %>%
+  count() %>% pull()
+```
+
+```{r}
+OME_DX_2000_pat_count <- OME_DX_2000 %>% distinct(PAT_NO) %>%
+  count() %>% pull()
+```
+
+```{r}
+OME_PX_2000_pat_count <- OME_PX_2000 %>% distinct(PAT_NO) %>%
+  count() %>% pull()
+```
+
+```{r}
+CRIT_2000_pat_count <- CRIT_2000 %>% distinct(PAT_NO) %>%
+  count() %>% pull()
+```
+
+There are:
+`r OMEGA_2000_pat_count` OMEGA_2000 unique patients
+`r OME_DX_2000_pat_count` OME_DX_2000 unique patients
+`r OME_PX_2000_pat_count` OME_PX_2000 unique patients
+`r CRIT_2000_pat_count` CRIT_2000_pat_counts
+
+## Why is the a diagnosis variable in OMEGA_2000 and also in OME_DX_2000?
+
+How do you link the two tables when the primary key of OMEGA_2000 relies on the ADM_HR variable that's not in OME_DX_2000?
+
+
+
+# ```{r}
+# 
+# OMEGA_2000 %>% outer_join(OME_DX_2000, by =c("PAT_NO" = "PAT_NO", 
+#                                              "ADM_DATE" = "ADM_DATE",
+#                                              "")
+# 
+# ```
+
+## Do both OMEGA_2000 ADM_SVC and OMEGA2000 DIS_SVC point to the SERVICE table?
+
+# Project questions
+
+## Assessment of the Overall Patient Population and Current Facility Services (20%)
+
+
+
+### Top disease entities treated by each group (Cardiac and Orthopedic) as well as the number of patients in each of these disease entities
+
+
+
+### Number of patients admitted for Cardiac and Orthopedic services.
+
+
+
+### Demographics of these patient groups, including geographic location
+
+
+
+### Relevant admission and discharge (disposition) data for these patient groups
+
+
+
+### LOS (length of stay) information for these patient groups
+
+
+
+### Qualitative assessment of the importance of Cardiac and Orthopedic services
+
+
+
+## Intensity/Utilization Indicators (20%)
+The issues in this area include:
+
+### What are some key data clues that suggest that the EHS Executive Committee should or should not accept risk via contracts for Cardiac and Orthopedic services?
+
+### What is the current status of the quality of care received by patients admitted via the ER?
+
+### What is the intensity of resource utilization for these services?
+A suggested (non-exhaustive) list of evaluation criteria in this area is as follows:
+
+### Reputation of Omega: How far do these patients travel to receive Cardiac and Orthopedic services at Omega compared to other services?
+
+### Death rates
+
+### Percent of encounters where service provided was teaching-related
+
+### Intensity/utilization figures relative to national benchmarks per service
+
+### Physician/surgeon information (e.g., admitting physician, specialty type, operating surgeon)
+Percent of visits requiring an external review
+
+### ICU/CCU information (e.g., was a stay in the ICU required; percent distribution of patients by LOS in CCUs; type of CCU where care was received, ALOS - average length of stay - in each unit - type)
+
+### Principal operations performed on each group (e.g., the number of patients having
+operations, the average number of operations performed, major types of operations
+
+
+
+
+
+III.
+Financial Viability (20%)
+### A suggested (non-exhaustive) list of financial measures includes:
+
+### Profitability of patients from Cardiac and Orthopedic services
+
+### LOS outlier rates
+
+### Payer mix
+
+### Rates of emergent vs. elective care
+
+### Probable future demand given Omega's patient demographics for Cardiac and Orthopedic services
+
+### Potential financial hazards as reimbursement switches from fee-for-service, to case (DRG)-based, to capitation, to capitation with prospective risk -sharing arrangements
+
+
