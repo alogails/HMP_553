@@ -8,8 +8,6 @@ editor_options:
 ---
 
 
-
-
 ```{r warning=FALSE, echo=FALSE}
 
 ###################################################################
@@ -22,9 +20,11 @@ library(tidyverse)
 ###################################################################
 
 # ICD-9 Diagnostic codes
+#Diganostics 
 nineDX11 <- read_csv("https://raw.githubusercontent.com/PositiveSumData/HMP_553/main/9DX11.csv")
 
 # ICD-9-CM Operative Codes
+#Operation 
 nine0P11 <- read_csv("https://raw.githubusercontent.com/PositiveSumData/HMP_553/main/9OP11.csv?token=AOUMBHAGKGSZG2TSGOG2CP3AM2FTQ")
 
 # Patient ICU stays
@@ -49,7 +49,8 @@ OME_PX_2000 <- read_csv("https://raw.githubusercontent.com/PositiveSumData/HMP_5
 # Organ donations
 ORGAN <- read_csv("https://raw.githubusercontent.com/PositiveSumData/HMP_553/main/ORGAN.csv?token=AOUMBHFMVUHRBMG6KI3IDRDAM2GMC")
 
-# ???????? This table is provided in the database but is not described in the codebook
+
+##Patients payment method, total, and cost
 PAYEX <- read_csv("https://raw.githubusercontent.com/PositiveSumData/HMP_553/main/PAYEX.csv?token=AOUMBHDRDOXPNZORSPDOJSLAM2GNC")
 
 # Services codes
@@ -76,6 +77,10 @@ CRIT_2000 %>%
   count(PAT_NO, ADM_DATE) %>%
   arrange(desc(n)) %>%
   slice(1)
+
+duplicated(CRIT_2000$PAT_NO) #NOT PK 
+duplicated(CRIT_2000$ADM_DATE) #NOT PK
+
 ```
 Nope, a single PAT_NO-ADM_DATE combo appears six times.
 
@@ -93,7 +98,7 @@ CRIT_2000 %>% count(PAT_NO, ADM_DATE, OCCURRENCE) %>%
 ```
 That worked. Our **composite key is PAT_NO-ADM_DATE-OCCURRENCE**.
 
-Each row is a unique combination of patient id, date of admission, and occurrence. The definition of occurrence in the codebook is confusing: "Ordering of CCU Stays." What is a Critical Care Unit, and how is it difference from the ICU? And how does it work out that someone ivsits the CCU multiple separate times over their admission?
+
 
 
 And what's the difference between all the ICU categories?
@@ -102,8 +107,22 @@ CRIT_2000 %>% count(ICU)
 ```
 Google says MICU is "medical intensive care unit". SICU is "surgical intensive care unit". I can't seem to figure out what CCU and SPEC_NSRY stand for.
 
+Intensive care units were grouped into 4 types: medical, including coronary care; surgical, including trauma and cardiovascular; neonatal and pediatric; and medical-surgical.
+CCU is " more specialized kind of critical care unit, known as a cardiac or coronary care unit"
+SPEC_NSRY maybe neonatal and pediatric or critical nursing 
 
+
+ 
 What's the difference between ICU_LOS and TOT_CCUS? Is "critical care" different from "intensive care"? Both lengths of stay added together are usually far less than the total stay (discharge - admitted). 
+
+ICU_LOS counts for the 4 different units 
+TOT_CCUS the total stay for critical care unit 
+
+A = CRIT_2000$ADM_DATE
+D = CRIT_2000$DIS_DATE
+# Get the total stay (d-a)
+#stay in icu or ccu is after an opertaion, makes sense that is lower 
+
 
 
 ## DRG
@@ -113,10 +132,41 @@ What's the primary key in the DRG table?
 DRG %>% count(DRG) %>%
   arrange(desc(n)) %>%
   slice(1)
+duplicated(DRG$MAJ_DX_CAT)
 ```
 It looks like **DRG is the DRG Primary key**.
 
-What is the WEIGHT and ARITH_LOS and MEAN_LOW and CUTOFF and how is reimbursement calculated? Are we supposed to use these in calculating reimbursement by DRG?. 
+What is the WEIGHT and ARITH_LOS and MEAN_LOS and CUTOFF and how is reimbursement calculated? 
+
+```{r}
+#Weight =  relative cost weight specific for each DR
+#Not sure about the other veribles 
+```
+
+Are we supposed to use these in calculating reimbursement by DRG?
+#Types of DRGs
+DRG %>% count(PARTITION)
+
+#DRG %>% group_by(PARTITION) %>% filter((MEDICAL, NEITHER, PROCEDURAL)) %>% ungroup
+```{r}
+#analyze the WEIGHT:
+fivenum(DRG$WEIGHT)
+W = DRG$WEIGHT
+#ARITH_LOS, 
+fivenum(DRG$ARITH_LOS)
+#MEAN_LOS, 
+fivenum(DRG$MEAN_LOS)
+#CUTOFF 
+fivenum(DRG$CUTOFF)
+```
+
+no
+we need to figure out if there are any outliers in each catagory 
+
+yes 
+1. DRG-based payment systems are often referred to as “case-based” or “case-mix-based”
+
+2. DRG payment is based on the care given to and resources used by a "typical" patient within the group. 
 
 
 ## nineDX11
@@ -184,9 +234,15 @@ Yep, all fine here.
 
 ## PAYEX
 
+```{r}
 There's no table description for PAYEX in the documentation. Does that mean it's safe to assume we don't need to use it?
+6 TYPES OF PAYMENTS WITH LOS AND TOT FOR EACH PA 
+not sure what to check there 
 
-It's a small table. Don't need to check counts. 
+PAYEX %>% group_by(PRIM_PAY) 
+```
+
+
 
 
 ## ORGAN
@@ -244,10 +300,13 @@ OMEGA_2000 <- OMEGA_2000 %>%
 Let's check if PAT_NO-ADM_DATE-ADM_HR is now a primary key now that overall duplicates removed 
 
 ```{r}
-OMEGA_2000 %>% count(PAT_NO, ADM_DATE, ADM_HR) %>%
+OMEGA_2000 %>% count(PAT_NO, ADM_DATE, DIS_DATE) %>%
   arrange(desc(n)) %>%
   slice(1)
 
+#no need for three composites 
+#can eliminate 
+#want to do this 
 ```
 Yep, no duplicates anymore. **PAT_NO-ADM_DATE-ADM_HR** is the composite key.
 
@@ -297,6 +356,9 @@ OMEGA_2000_demo <- OMEGA_2000 %>%
 
 IS PAT_NO-ADM_DATE-OCCURRENCE the primary key?
 ```{r}
+
+OME_PX_2000 <- OME_PX_2000 %>% distinct()
+
 OME_PX_2000 %>%
   count(PAT_NO, ADM_DATE, OCCURRENCE) %>%
   arrange(desc(n)) %>%
@@ -422,6 +484,8 @@ OME_DX_2000 %>%
 ```
 
 Patient # 28940773 has two rows where everything else is the same except for discharge date. I have no idea what's going on.
+
+we might delete
 Question for DAVID.
 
 
@@ -459,73 +523,68 @@ How do you link the two tables when the primary key of OMEGA_2000 relies on the 
 
 
 
-# ```{r}
-# 
-# OMEGA_2000 %>% outer_join(OME_DX_2000, by =c("PAT_NO" = "PAT_NO", 
-#                                              "ADM_DATE" = "ADM_DATE",
-#                                              "")
-# 
-# ```
+```{r}
 
-## Do both OMEGA_2000 ADM_SVC and OMEGA2000 DIS_SVC point to the SERVICE table?
+
+inner_join(OMEGA_2000, OME_DX_2000, by = c("PAT_NO" = "PAT_NO", 
+                                              "ADM_DATE" = "ADM_DATE"))
+
+```
+
+Do both OMEGA_2000 ADM_SVC and OMEGA2000 DIS_SVC point to the SERVICE table?
+```{r}
+
+OMEGA_2000 %>%
+  count(ADM_SVC)
+  
+  OMEGA_2000 %>%
+  count(DIS_SVC)
+  
+  yes 
+```
+  
 
 # Project questions
 
-## Assessment of the Overall Patient Population and Current Facility Services (20%)
+##ICU/CCU information (e.g., was a stay in the ICU required; percent distribution of patients by LOS in CCUs; type of CCU where care was received, ALOS -average length of stay- in each unit-type)
+
+```{r}
+#required 
+
+
+#percent distribution of patients by LOS in CCUs
+
+
+#CCU TYPE & LOS each type
+types = CRIT_2000 %>% count(ICU)
+ggplot(data=CRIT_2000, mapping=aes(x=CRIT_2000$ICU, y=CRIT_2000$ICU_LOS) + geom_bar(stat='identity')
 
 
 
-### Top disease entities treated by each group (Cardiac and Orthopedic) as well as the number of patients in each of these disease entities
+```
 
 
 
-### Number of patients admitted for Cardiac and Orthopedic services.
+##Principal operations performed on each group (e.g., the number of patients having operations, the average number of operations performed, major types of operations performed)
+```{r}
+#the number of patients having operations
+OME_PX_2000 %>% count(PAT_NO)
 
+#the average number of operations performed
 
+#major types of operations performed
 
-### Demographics of these patient groups, including geographic location
+```
 
+##Reputation of Omega: How far do these patients travel to receive Cardiac and Orthopedic services at Omega compared to other services?
+```{r}
+# How far do these patients travel to receive Cardiac and Orthopedic services w'Omega compared vs others
+```
 
+##Death rates
 
-### Relevant admission and discharge (disposition) data for these patient groups
-
-
-
-### LOS (length of stay) information for these patient groups
-
-
-
-### Qualitative assessment of the importance of Cardiac and Orthopedic services
-
-
-
-## Intensity/Utilization Indicators (20%)
-The issues in this area include:
-
-### What are some key data clues that suggest that the EHS Executive Committee should or should not accept risk via contracts for Cardiac and Orthopedic services?
-
-### What is the current status of the quality of care received by patients admitted via the ER?
-
-### What is the intensity of resource utilization for these services?
-A suggested (non-exhaustive) list of evaluation criteria in this area is as follows:
-
-### Reputation of Omega: How far do these patients travel to receive Cardiac and Orthopedic services at Omega compared to other services?
-
-### Death rates
-
-### Percent of encounters where service provided was teaching-related
-
-### Intensity/utilization figures relative to national benchmarks per service
-
-### Physician/surgeon information (e.g., admitting physician, specialty type, operating surgeon)
-Percent of visits requiring an external review
-
-### ICU/CCU information (e.g., was a stay in the ICU required; percent distribution of patients by LOS in CCUs; type of CCU where care was received, ALOS - average length of stay - in each unit - type)
-
-### Principal operations performed on each group (e.g., the number of patients having
-operations, the average number of operations performed, major types of operations
-
-
+```{r}
+```
 
 
 
